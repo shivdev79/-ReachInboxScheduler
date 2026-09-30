@@ -4,6 +4,8 @@ import React, { useState } from 'react';
 import { User, Sender } from '../types';
 import { Clock, Send, Plus, ChevronDown, MessageSquare, ExternalLink, LogOut, ShieldAlert } from 'lucide-react';
 
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+
 interface SidebarProps {
   user: User | null;
   activeTab: 'scheduled' | 'sent';
@@ -200,7 +202,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
         {/* BullMQ Dashboard */}
         <a
-          href="http://localhost:5000/admin/queues"
+          href={`${API_BASE_URL}/admin/queues`}
           target="_blank"
           rel="noopener noreferrer"
           className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium text-slate-600 hover:bg-slate-100 transition-all"
