@@ -156,22 +156,31 @@ For fast local load checks only, set `SMTP_MODE=stub`. Stub mode records accepte
 - Authenticated `/api/emails/scheduled`, `/api/emails/sent`, and `/api/emails/search`: dashboard email views and search.
 - Email, sender, and Slack routes require an authenticated session. Slack OAuth validates a state cookie against the callback state parameter.
 
-## Implemented Features
+## Feature Implementation
 
-| Assignment area | Implemented behavior |
+### Backend
+
+| Assignment requirement | Implementation |
 | --- | --- |
-| Backend scheduling | Authenticated `POST /api/emails/schedule` stores per-recipient rows in PostgreSQL and queues delayed BullMQ jobs in bulk. |
-| Persistence and recovery | PostgreSQL is the source of truth; Redis AOF persists queue state. Startup recovery restores scheduled jobs and reconciles stale sending rows using their persisted provider Message-ID when available. |
-| Idempotency | A request idempotency key plus recipient index produces a deterministic per-email key. PostgreSQL uniqueness and BullMQ job IDs prevent duplicate queue entries; conditional row claims prevent two workers from sending the same row concurrently. |
-| Rate limiting | Atomic Redis Lua reservations enforce configurable UTC fixed-hour limits per sender across worker processes. Over-limit jobs remain scheduled for the next hour rather than failing. |
-| Pacing and concurrency | `WORKER_CONCURRENCY` configures BullMQ worker concurrency. Redis sender locks and pacing slots enforce the configured minimum delay between starts for each sender. BullMQ active-job locks default to 30 seconds and renew every 15 seconds. |
-| Email transport | Sender-specific Ethereal SMTP credentials allow multiple sending identities. Sent rows include Ethereal preview URLs. |
-| Search and queue visibility | Email changes are indexed in Elasticsearch for search. Authenticated Bull Board exposes live waiting, delayed, active, completed, and failed queue state. |
-| Slack rate-limit alerts | Users can connect Slack through OAuth. The worker sends at most one alert per sender/hour window; disconnected or failed Slack delivery does not fail email jobs. |
-| Authentication | Google OAuth authorization-code flow validates state and verifies the ID token server-side. The app also offers email/password account access for local development and smoke testing. Sessions use an HTTP-only cookie. |
-| Frontend dashboard | Next.js dashboard displays the signed-in user's name, email, avatar or initials fallback, logout, sender usage, and Scheduled/Sent navigation. |
-| Compose | Compose accepts recipients manually or through CSV/TXT upload, deduplicates valid addresses, edits subject/body, and configures send time, pacing, and hourly limit. |
-| Email views | Scheduled and sent/failed messages display recipient, subject, time, and status, with search, loading, empty, refresh, and error states. |
+| Schedule email requests | Authenticated `POST /api/emails/schedule` validates the request, creates one PostgreSQL email row per recipient, and bulk-enqueues delayed BullMQ jobs. |
+| Persistent delivery | PostgreSQL is the source of truth; Redis AOF persists BullMQ state. Startup recovery restores scheduled jobs and reconciles stale `SENDING` rows from persisted provider Message-IDs when available. |
+| Idempotency | A request idempotency key plus recipient index creates a deterministic per-email key. PostgreSQL uniqueness, BullMQ job IDs, and conditional row claims prevent duplicate queue entries and concurrent sends of the same row. |
+| Rate limiting | Atomic Redis Lua reservations enforce configurable UTC fixed-hour limits per sender across workers. Jobs above the cap remain scheduled for the next hour instead of being dropped or failed. |
+| Pacing and concurrency | `WORKER_CONCURRENCY` controls worker concurrency. Redis sender locks and pacing slots enforce per-sender send spacing. BullMQ job locks default to 30 seconds and renew every 15 seconds. |
+| SMTP and multiple senders | Each sender has its own Ethereal SMTP settings. Sent rows include Ethereal preview URLs; stub mode is available for high-volume local tests. |
+| Search and queue visibility | Email documents are indexed in Elasticsearch. Authenticated Bull Board exposes waiting, delayed, active, completed, and failed jobs. |
+| Slack alerts | Slack OAuth stores an incoming webhook per user. Rate-limit alerts are deduplicated per sender/hour; disconnected or failed Slack delivery does not fail email jobs. |
+
+### Frontend
+
+| Assignment requirement | Implementation |
+| --- | --- |
+| Login and account controls | Google OAuth login plus email/password development access; dashboard shows account name, email, avatar or initials fallback, and logout. |
+| Dashboard navigation | Scheduled and Sent sections, sender usage, queue dashboard link, and primary Compose control. |
+| Compose | Subject/body editor, recipient chips, CSV/TXT upload with valid-address detection and deduplication, sender selection, scheduled start time, delay, and hourly limit. |
+| Rich-text editing | Formatting toolbar supports undo/redo, text styles, bold, italic, underline, alignment, lists, indentation, quote, code, links, images, and strikethrough. |
+| Scheduled and sent views | Recipient, subject, scheduled/sent time, delivery status, and Ethereal preview links where available. |
+| UX and search | Search, refresh, loading and empty states, success/error toasts, and email details view. | 
 
 ## Verification Commands
 
