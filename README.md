@@ -19,6 +19,27 @@ Express API -------> PostgreSQL (users, senders, email state, idempotency)
               +--> delayed jobs and AOF persistence
 ```
 
+### Component Responsibilities
+
+- **Next.js frontend** owns the login, dashboard, compose editor, CSV/TXT recipient parsing, scheduled/sent views, and user-facing loading/error states. It calls the API with the HTTP-only session cookie.
+- **Express API** validates authenticated requests, creates email records, bulk-enqueues BullMQ jobs, serves email/sender views, handles Google OAuth, and starts Slack OAuth.
+- **PostgreSQL via Prisma** is the authoritative store for users, sender SMTP settings, message status/timestamps, idempotency keys, and the persisted hourly reservation timestamp.
+- **Redis** backs BullMQ, atomic hourly quota reservations, per-sender pacing/locks, and one-alert-per-hour Slack deduplication. Docker Compose enables Redis AOF persistence.
+- **BullMQ worker** consumes delayed jobs, applies rate/pacing checks, atomically claims each email row, sends via SMTP, updates PostgreSQL, and refreshes its Elasticsearch document.
+- **Ethereal** captures test messages and returns preview URLs. It does not deliver to real recipient inboxes.
+- **Elasticsearch** is a rebuildable search index; PostgreSQL remains the source of truth if Elasticsearch is unavailable.
+- **Bull Board** provides an authenticated live view of BullMQ queue states at `/admin/queues`.
+
+### Request And Recovery Flows
+
+1. The compose form submits the selected sender, recipients, subject/body, start time, pacing, hourly limit, and an idempotency key to `POST /api/emails/schedule`.
+2. The API creates one PostgreSQL email row per valid recipient, indexes the rows in bulk, and adds corresponding BullMQ delayed jobs. A future `scheduledAt` becomes the BullMQ delay; no cron loop polls for due messages.
+3. At execution, a worker atomically reserves that sender's quota/pacing slot in Redis. If the hourly quota is exhausted, the row stays `SCHEDULED` and the job is moved to the next UTC hour. Otherwise, the worker obtains the sender lock and conditionally transitions the row to `SENDING` before contacting SMTP.
+4. After provider acceptance, the worker persists the SMTP Message-ID, marks the row `SENT`, stores the Ethereal preview URL, and updates Elasticsearch. A provider error is recorded as `FAILED` after retries are exhausted; the reserved quota is not returned.
+5. On startup, recovery reads PostgreSQL `SCHEDULED`/stale `SENDING` rows and restores missing BullMQ jobs. If a `SENDING` row has a persisted Message-ID, it reconciles the row as sent instead of sending again. If the process crashed before persisting acceptance, the row is eligible for retry after the configured recovery timeout.
+
+The database and SMTP provider cannot share a transaction. As a result, exactly-once delivery cannot be guaranteed in the narrow interval where SMTP accepts a message but the process crashes before saving its Message-ID. The implementation uses deterministic Message-IDs, persisted state, conditional row claims, and BullMQ job IDs to minimize duplicates and recover safely; the provider must honor Message-ID deduplication for a strict external exactly-once guarantee.
+
 ## Scheduling And Delivery
 
 Scheduling uses BullMQ delayed jobs; there is no periodic scheduler. The API bulk-inserts email rows, bulk-indexes them, and uses `Queue.addBulk()` with each row's `scheduledAt` as a delay. A worker checks the rate limit before dispatch. It then obtains an atomic per-sender Redis send lock, checks the last-start timestamp, and holds the lock through SMTP and status persistence so concurrent workers cannot start together. A bounded lock expiry recovers abandoned sends after a process crash.
