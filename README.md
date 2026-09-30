@@ -90,8 +90,8 @@ Render Key Value persistence and persistent service disks may require paid plans
 Create a Render **Web Service** from the private GitHub repository and configure:
 
 - Runtime: **Docker**
-- Dockerfile path: `backend/Dockerfile`
-- Docker build context: `backend`
+- Root directory: `backend`
+- Dockerfile path: `Dockerfile` (relative to the configured root directory)
 - Health check path: `/health`
 - `NODE_ENV=production`
 - `DATABASE_URL`: Render Postgres internal connection string
@@ -120,8 +120,8 @@ Add `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` through Render's secret enviro
 Create a second Render **Web Service** from the same repository:
 
 - Runtime: **Docker**
-- Dockerfile path: `frontend/Dockerfile`
-- Docker build context: `frontend`
+- Root directory: `frontend`
+- Dockerfile path: `Dockerfile` (relative to the configured root directory)
 - Environment variable/build argument: `NEXT_PUBLIC_API_URL=https://<backend-domain>`
 
 Render exposes configured environment variables to Docker builds as build arguments. The frontend Dockerfile embeds `NEXT_PUBLIC_API_URL` into the Next.js client bundle at build time. Redeploy the frontend after changing it. The `next start` command honors Render's assigned `PORT`.
