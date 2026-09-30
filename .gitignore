@@ -1,0 +1,13 @@
+**/node_modules/
+**/.next/
+**/.next-dev/
+**/dist/
+**/coverage/
+**/*.log
+**/*.tsbuildinfo
+backend/prisma/dev.db
+backend/scripts/
+backend/tmp-slack-check.ts
+**/.env
+**/.env.*
+!**/.env.example
