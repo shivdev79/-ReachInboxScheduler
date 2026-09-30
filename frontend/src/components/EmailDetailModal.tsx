@@ -12,7 +12,8 @@ interface EmailDetailModalProps {
 export const EmailDetailModal: React.FC<EmailDetailModalProps> = ({ email, onClose }) => {
   if (!email) return null;
 
-  const formattedTime = new Date(email.scheduledAt).toLocaleString('en-US', {
+  const eventTime = email.sentAt || email.scheduledAt;
+  const formattedTime = new Date(eventTime).toLocaleString('en-US', {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
@@ -20,7 +21,10 @@ export const EmailDetailModal: React.FC<EmailDetailModalProps> = ({ email, onClo
     hour12: true,
   });
 
-  const senderInitial = email.sender?.name ? email.sender.name.charAt(0).toUpperCase() : 'A';
+  const senderName = email.sender?.name || 'Unknown sender';
+  const senderEmail = email.sender?.email || 'No sender email';
+  const senderInitial = senderName.charAt(0).toUpperCase() || 'A';
+  const queueSummary = `Scheduled via BullMQ delayed queue engine with minimum ${email.delayBetweenSec || 2}s provider throttling delay.`;
 
   return (
     <div className="fixed inset-0 z-50 bg-white flex flex-col animate-fadeIn overflow-y-auto">
@@ -46,11 +50,9 @@ export const EmailDetailModal: React.FC<EmailDetailModalProps> = ({ email, onClo
           <button className="p-1.5 text-slate-400 hover:text-rose-500">
             <Trash2 className="w-4 h-4" />
           </button>
-          <img
-            src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150"
-            alt="User"
-            className="w-7 h-7 rounded-full object-cover border border-slate-300"
-          />
+          <div className="w-7 h-7 rounded-full bg-emerald-600 text-white text-[10px] font-bold flex items-center justify-center border border-slate-300">
+            {senderInitial}
+          </div>
         </div>
       </div>
 
@@ -65,10 +67,10 @@ export const EmailDetailModal: React.FC<EmailDetailModalProps> = ({ email, onClo
             </div>
             <div>
               <p className="text-sm font-bold text-slate-900">
-                {email.sender?.name || 'Amanda Clark'}{' '}
-                <span className="text-slate-400 font-normal text-xs">&lt;{email.sender?.email || 'sender@example.com'}&gt;</span>
+                {senderName}{' '}
+                <span className="text-slate-400 font-normal text-xs">&lt;{senderEmail}&gt;</span>
               </p>
-              <p className="text-xs text-slate-400">to me ▾</p>
+              <p className="text-xs text-slate-400">to {email.recipient || 'recipient'} ▾</p>
             </div>
           </div>
 
@@ -76,7 +78,7 @@ export const EmailDetailModal: React.FC<EmailDetailModalProps> = ({ email, onClo
         </div>
 
         {/* Ethereal Email Link Banner if available */}
-        {email.etherealPreviewUrl && (
+        {email.etherealPreviewUrl ? (
           <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 flex items-center justify-between text-xs text-emerald-800 font-medium">
             <span>Dispatched via Ethereal SMTP Test Server</span>
             <a
@@ -89,19 +91,21 @@ export const EmailDetailModal: React.FC<EmailDetailModalProps> = ({ email, onClo
               <ExternalLink className="w-3.5 h-3.5" />
             </a>
           </div>
-        )}
+        ) : email.status === 'SENT' ? (
+          <div className="p-3 rounded-xl bg-slate-100 border border-slate-200 text-xs text-slate-600 font-medium">
+            Email sent successfully via Ethereal SMTP. Preview URL is not currently available from the test inbox.
+          </div>
+        ) : null}
 
         {/* Email Body Text */}
         <div className="text-sm text-slate-800 leading-relaxed space-y-4 whitespace-pre-wrap font-sans pt-2">
           {email.body}
         </div>
 
-        {/* Highlighted Banner snippet matching Figma */}
+        {/* Queue information derived from the actual email row */}
         <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 space-y-1">
-          <p className="font-bold">⚡ Priority Campaign Dispatch</p>
-          <p className="text-amber-800">
-            Scheduled via BullMQ delayed queue engine with minimum {email.delayBetweenSec || 2}s provider throttling delay.
-          </p>
+          <p className="font-bold">⚡ Queue status</p>
+          <p className="text-amber-800">{queueSummary}</p>
         </div>
 
       </div>

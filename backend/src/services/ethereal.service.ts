@@ -8,6 +8,30 @@ export interface EtherealCredentials {
   smtpPort: number;
 }
 
+export async function isPreviewUrlUsable(url: string | false): Promise<boolean> {
+  if (!url || !/^https?:\/\//i.test(url)) return false;
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 4000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'HEAD',
+        redirect: 'follow',
+        signal: controller.signal,
+      });
+
+      return response.ok || response.status >= 300 && response.status < 400;
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (error) {
+    console.warn(`⚠️ Ethereal preview validation failed for ${url}:`, (error as Error).message);
+    return false;
+  }
+}
+
 export async function createEtherealAccount(): Promise<EtherealCredentials> {
   const testAccount = await nodemailer.createTestAccount();
   return {
@@ -66,10 +90,16 @@ export async function sendEmailViaEthereal(params: {
   });
 
   const previewUrl = nodemailer.getTestMessageUrl(info);
-  console.log(`✉️ Email dispatched to ${params.toEmail} | Message ID: ${info.messageId} | Preview: ${previewUrl}`);
+  const usablePreviewUrl = previewUrl && await isPreviewUrlUsable(previewUrl) ? previewUrl : false;
+
+  if (previewUrl && !usablePreviewUrl) {
+    console.warn(`⚠️ Ethereal preview URL was generated but is unavailable or expired for ${params.toEmail}. Falling back to delivery-only state.`);
+  }
+
+  console.log(`✉️ Email dispatched to ${params.toEmail} | Message ID: ${info.messageId} | Preview: ${usablePreviewUrl || 'unavailable'}`);
 
   return {
     messageId: info.messageId,
-    previewUrl: previewUrl || false,
+    previewUrl: usablePreviewUrl,
   };
 }

@@ -126,6 +126,8 @@ export const EmailTable: React.FC<EmailTableProps> = ({ emails, type, loading })
                         <span>View Ethereal Email</span>
                         <ExternalLink className="h-3 w-3" />
                       </a>
+                    ) : email.status === 'SENT' ? (
+                      <span className="text-slate-500 text-[11px]">Preview unavailable</span>
                     ) : (
                       <span className="text-slate-600 text-[11px]">In Queue</span>
                     )}

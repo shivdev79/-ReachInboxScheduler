@@ -126,7 +126,7 @@ export const EmailList: React.FC<EmailListProps> = ({
 
               {/* Right Column: Ethereal Link + Star Icon */}
               <div className="flex items-center gap-3 flex-shrink-0 pl-2">
-                {email.etherealPreviewUrl && (
+                {email.etherealPreviewUrl ? (
                   <a
                     href={email.etherealPreviewUrl}
                     target="_blank"
@@ -137,7 +137,9 @@ export const EmailList: React.FC<EmailListProps> = ({
                     <span>Ethereal</span>
                     <ExternalLink className="w-3 h-3" />
                   </a>
-                )}
+                ) : email.status === 'SENT' ? (
+                  <span className="text-[11px] text-slate-500">Preview unavailable</span>
+                ) : null}
                 <Star className="w-4 h-4 text-slate-300 hover:text-amber-400 transition-colors" />
               </div>
 

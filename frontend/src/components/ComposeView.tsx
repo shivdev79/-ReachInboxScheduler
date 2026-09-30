@@ -197,9 +197,21 @@ export const ComposeView: React.FC<ComposeViewProps> = ({
     });
   };
 
+  const formatLocalDateTime = (date: Date) => {
+    const pad = (value: number) => String(value).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  };
+
+  const applyPresetTime = (hours: number, minutes = 0) => {
+    const date = new Date(Date.now() + 86400000);
+    date.setHours(hours, minutes, 0, 0);
+    setStartTime(formatLocalDateTime(date));
+  };
+
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const recipients = Array.from(new Set([...parsedEmails, ...extractEmailsFromText(recipientsInput)]));
+    const utcStartTime = startTime ? new Date(startTime).toISOString() : undefined;
     if (!subject.trim()) {
       toast.error('Subject is required.');
       return;
@@ -221,7 +233,7 @@ export const ComposeView: React.FC<ComposeViewProps> = ({
         body: body.trim(),
         recipients,
         senderId: selectedSenderId || senders[0]?.id,
-        startTime: startTime || undefined,
+        startTime: utcStartTime,
         delayBetweenSec,
         hourlyLimit,
         userId: user?.id,
@@ -316,33 +328,21 @@ export const ComposeView: React.FC<ComposeViewProps> = ({
                 <div className="space-y-1.5 pt-1 text-slate-600">
                   <button
                     type="button"
-                    onClick={() => {
-                      const d = new Date(Date.now() + 86400000);
-                      d.setHours(9, 0, 0, 0);
-                      setStartTime(d.toISOString().slice(0, 16));
-                    }}
+                    onClick={() => applyPresetTime(9, 0)}
                     className="w-full text-left py-1 hover:text-emerald-600"
                   >
                     Tomorrow, 9:00 AM
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      const d = new Date(Date.now() + 86400000);
-                      d.setHours(10, 0, 0, 0);
-                      setStartTime(d.toISOString().slice(0, 16));
-                    }}
+                    onClick={() => applyPresetTime(10, 0)}
                     className="w-full text-left py-1 hover:text-emerald-600"
                   >
                     Tomorrow, 10:00 AM
                   </button>
                   <button
                     type="button"
-                    onClick={() => {
-                      const d = new Date(Date.now() + 86400000);
-                      d.setHours(15, 0, 0, 0);
-                      setStartTime(d.toISOString().slice(0, 16));
-                    }}
+                    onClick={() => applyPresetTime(15, 0)}
                     className="w-full text-left py-1 hover:text-emerald-600"
                   >
                     Tomorrow, 3:00 PM
