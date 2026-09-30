@@ -97,6 +97,13 @@ export const EmailDetailModal: React.FC<EmailDetailModalProps> = ({ email, onClo
           </div>
         ) : null}
 
+        {email.status === 'FAILED' && (
+          <div role="alert" className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-900">
+            <p className="font-semibold">Delivery failed</p>
+            <p className="mt-1 break-words">{email.failureReason || 'The SMTP provider did not accept this message. Check the backend logs for details.'}</p>
+          </div>
+        )}
+
         {/* Email Body Text */}
         <div className="text-sm text-slate-800 leading-relaxed space-y-4 whitespace-pre-wrap font-sans pt-2">
           {email.body}
