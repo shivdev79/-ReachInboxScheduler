@@ -2,7 +2,20 @@
 
 ReachInbox is an Express/TypeScript scheduler and Next.js dashboard. PostgreSQL stores email records, Redis/BullMQ persists delayed jobs and enforces pacing, Elasticsearch serves search, and Nodemailer sends through Ethereal in the demo configuration.
 
-## Architecture
+## Contents
+
+- [How to run the backend](#how-to-run-the-backend)
+- [How to run the frontend](#how-to-run-the-frontend)
+- [How to configure environment variables](#how-to-configure-environment-variables)
+- [How to set up Ethereal Email](#how-to-set-up-ethereal-email)
+- [Architecture overview](#architecture-overview)
+- [How scheduling works](#how-scheduling-works)
+- [How persistence on restart works](#how-persistence-on-restart-works)
+- [How rate limiting and concurrency work](#how-rate-limiting-and-concurrency-work)
+- [Implemented features mapped to the assignment](#implemented-features-mapped-to-the-assignment)
+- [Deploy to Render](#deploy-to-render)
+
+## Architecture Overview
 
 ```text
 Browser (Next.js)
@@ -40,15 +53,23 @@ Express API -------> PostgreSQL (users, senders, email state, idempotency)
 
 The database and SMTP provider cannot share a transaction. As a result, exactly-once delivery cannot be guaranteed in the narrow interval where SMTP accepts a message but the process crashes before saving its Message-ID. The implementation uses deterministic Message-IDs, persisted state, conditional row claims, and BullMQ job IDs to minimize duplicates and recover safely; the provider must honor Message-ID deduplication for a strict external exactly-once guarantee.
 
-## Scheduling And Delivery
+## How Scheduling Works
 
-Scheduling uses BullMQ delayed jobs; there is no periodic scheduler. The API bulk-inserts email rows, bulk-indexes them, and uses `Queue.addBulk()` with each row's `scheduledAt` as a delay. A worker checks the rate limit before dispatch. It then obtains an atomic per-sender Redis send lock, checks the last-start timestamp, and holds the lock through SMTP and status persistence so concurrent workers cannot start together. A bounded lock expiry recovers abandoned sends after a process crash.
+The authenticated compose flow sends the requested start time and recipient list to `POST /api/emails/schedule`. The API validates the request, creates one PostgreSQL row per recipient, indexes the records in Elasticsearch, and calls BullMQ `Queue.addBulk()` with a delay calculated from each row's `scheduledAt`. There is no cron job or polling loop: Redis/BullMQ makes each delayed job available when it is due.
 
-The submission defaults are `WORKER_CONCURRENCY=3`, `MIN_DELAY_BETWEEN_EMAILS_MS=2000`, and `MAX_EMAILS_PER_HOUR_PER_SENDER=5`. That means a minimum of **2 seconds between sends from one sender**. Compose sends `delayBetweenSec` and `hourlyLimit` on each request, so those values override the backend globals and are persisted with the email row and queue payload. Direct API callers may omit them to use the configured global values.
+When a job becomes due, a worker reloads its database row, checks its persisted state, reserves a sender quota/pacing slot, obtains the sender lock, and conditionally claims the row as `SENDING`. After SMTP accepts the message, the worker stores the message ID, sent state, and Ethereal preview URL, then updates Elasticsearch. If a quota or pacing slot is not available, the job remains scheduled and BullMQ delays it again.
 
-Hourly reservations use one Redis Lua script and a UTC fixed-hour key, `rl:count:{senderId}:{hourWindowStartMs}`. The script increments atomically up to the limit and reserves a pacing slot. The key expires after two hours. The reserved window is also persisted on the email row and restored into the BullMQ payload, preventing restart recovery from counting the same email reservation again. Once the cap is reached, the job's database status remains `SCHEDULED` and BullMQ moves it to the next UTC hour; this is deferred work, not a failed send. A reservation counts against the limit even if SMTP later fails, favoring never exceeding the provider cap over maximizing successful sends. A separate `ratelimit-alert:sender:{senderId}:{hourWindow}` NX key limits Slack alerts to one per sender per hour window.
+## How Rate Limiting And Concurrency Work
 
-### Restart Persistence And Idempotency
+The worker's parallelism is controlled by `WORKER_CONCURRENCY` (default `3`). Multiple jobs can be active, while an atomic Redis lock serializes sends from the same sender across workers or backend instances. The lock has an ownership token and a bounded expiry so another worker can recover after a process failure.
+
+The default pacing is `MIN_DELAY_BETWEEN_EMAILS_MS=2000`, which enforces at least **2 seconds between sends from one sender**. The compose form can set a per-request delay and hourly limit; those values are stored with the email and queue payload. API callers that omit the values use the backend defaults. BullMQ lock settings are configurable with `BULLMQ_LOCK_DURATION_MS` and `BULLMQ_LOCK_RENEW_TIME_MS`.
+
+The default hourly cap is `MAX_EMAILS_PER_HOUR_PER_SENDER=5`. A Redis Lua script atomically reserves hourly quota and pacing slots using a UTC fixed-hour key, `rl:count:{senderId}:{hourWindowStartMs}`. The key expires after two hours, and its reservation window is also stored on the email row so restart recovery does not reserve the same email twice. Once the cap is reached, jobs remain `SCHEDULED` and move to the next UTC hour; they are deferred, not dropped or permanently failed. A reservation remains counted even if SMTP later fails, prioritizing enforcement of the provider cap.
+
+When the sender's cap is reached, the worker attempts one Slack alert per sender/hour window using a Redis `NX` deduplication key. The alert is sent only when that email owner's Slack webhook is connected; a missing webhook or Slack delivery error does not fail the email job.
+
+## How Persistence On Restart Works
 
 - PostgreSQL stores email state; Redis persistence is enabled with AOF in Docker Compose.
 - Each request's idempotency key is combined with the user and recipient index to form a deterministic per-email key. PostgreSQL enforces uniqueness on `(userId, idempotencyKey)` and the same value is BullMQ's `jobId`.
@@ -61,7 +82,7 @@ Hourly reservations use one Redis Lua script and a UTC fixed-hour key, `rl:count
 
 Requests use Prisma `createMany`, Elasticsearch bulk indexing, and BullMQ `addBulk`, so 1,000+ recipients can be registered without one database/queue round trip per recipient. Queueing capacity does not bypass sender limits: with two senders capped at five per hour, at most ten are eligible in that UTC hour; the remainder stay delayed for later windows. Redis, PostgreSQL, Elasticsearch, provider quotas, and configured pacing determine throughput. Use the test verifier with `SMTP_MODE=stub` to check volume without external SMTP traffic.
 
-## Setup Instructions
+## Local Setup
 
 ### 1. Start infrastructure
 
@@ -73,7 +94,7 @@ docker compose up -d --wait postgres redis elasticsearch
 
 The compose file publishes PostgreSQL on `5432`, Redis on host port `6380`, and Elasticsearch on `9200`.
 
-## Render Deployment
+## Deploy to Render
 
 The repository includes separate Dockerfiles and `.dockerignore` files for the API/worker and Next.js frontend. Deploy the two services from the same GitHub repository in one Render region using the dashboard's Docker-service setup below. The email worker runs inside the backend web service process; do not create a second worker service unless you intentionally change the deployment topology.
 
@@ -130,7 +151,7 @@ Render exposes configured environment variables to Docker builds as build argume
 
 After the backend has deployed and its database connection is healthy, open the backend service Shell and run `npm run prisma:seed` once to create the demo user and two Ethereal senders. Seeding requires outbound access to Ethereal. Verify the backend at `https://<backend-domain>/health`, then test Google login, composing/scheduling, the scheduled/sent views, and Bull Board. Ethereal is a test inbox; messages are not delivered to real recipients.
 
-### 2. Configure and start the backend
+## How To Run The Backend
 
 Copy `backend/.env.example` to `backend/.env`, set a unique random `JWT_SECRET`, and configure Google OAuth before using Google login. Slack variables are needed only for Slack OAuth. Do not commit `.env` files.
 
@@ -145,7 +166,7 @@ npm run dev
 
 The seed command creates a demo user and two Ethereal senders; it needs outbound access to create Ethereal test accounts. Newly created Ethereal SMTP credentials are stored in the local PostgreSQL sender records, not in source control. The backend listens on `http://localhost:5000`. Both `GET /health` and `GET /api/health` are health probes. Elasticsearch may be unavailable at startup; the API logs that it is using database fallback search.
 
-### 3. Start the frontend
+## How To Run The Frontend
 
 In a second terminal:
 
@@ -157,11 +178,11 @@ npm run dev
 
 Open `http://localhost:3000`. The frontend API base defaults to `http://localhost:5000`; set `NEXT_PUBLIC_API_URL` only when the backend is elsewhere.
 
-### 4. Configure Google login
+## Google OAuth Setup
 
 Create a Google OAuth web client and register `http://localhost:5000/api/auth/google/callback` as its redirect URI. Set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` in `backend/.env`. Add your account as a test user if the consent screen is in testing mode.
 
-## Environment Variables
+## How To Configure Environment Variables
 
 | Variable | Example/default | Purpose |
 | --- | --- | --- |
@@ -189,7 +210,7 @@ Create a Google OAuth web client and register `http://localhost:5000/api/auth/go
 
 `backend/.env.test` intentionally uses a compressed pacing value and SMTP stub. Do not use it as evidence for the real 2-second SMTP run.
 
-### Ethereal Email Setup
+## How To Set Up Ethereal Email
 
 Ethereal is a fake SMTP service: messages are captured for inspection and are not delivered to real recipients. The default `SMTP_MODE=ethereal` uses the SMTP host, port, username, and password saved on each sender row. The included `npm run prisma:seed` script calls Nodemailer's `createTestAccount()` to create two test accounts and stores their credentials in PostgreSQL. It requires outbound internet access during seeding. Open the `etherealPreviewUrl` returned for a sent message to inspect it.
 
@@ -213,7 +234,7 @@ For fast local load checks only, set `SMTP_MODE=stub`. Stub mode records accepte
 - Authenticated `/api/emails/scheduled`, `/api/emails/sent`, and `/api/emails/search`: dashboard email views and search.
 - Email, sender, and Slack routes require an authenticated session. Slack OAuth validates a state cookie against the callback state parameter.
 
-## Feature Implementation
+## Implemented Features Mapped To The Assignment
 
 ### Backend
 
