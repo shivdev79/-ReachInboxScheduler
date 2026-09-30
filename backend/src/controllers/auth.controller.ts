@@ -52,7 +52,10 @@ function isGoogleOAuthConfigured(): boolean {
 function getGoogleOAuthClient(): OAuth2Client {
   const googleClientId = process.env.GOOGLE_CLIENT_ID || '';
   const googleClientSecret = process.env.GOOGLE_CLIENT_SECRET || '';
-  const googleRedirectUri = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:5000/api/auth/google/callback';
+  const googleRedirectUri = process.env.GOOGLE_REDIRECT_URI
+    || (process.env.RENDER_EXTERNAL_URL
+      ? `${process.env.RENDER_EXTERNAL_URL}/api/auth/google/callback`
+      : 'http://localhost:5000/api/auth/google/callback');
 
   return new OAuth2Client(
     googleClientId,

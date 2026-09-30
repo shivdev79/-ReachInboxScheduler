@@ -73,17 +73,62 @@ docker compose up -d --wait postgres redis elasticsearch
 
 The compose file publishes PostgreSQL on `5432`, Redis on host port `6380`, and Elasticsearch on `9200`.
 
-## Railway Deployment
+## Render Deployment
 
-The repository includes separate Dockerfiles for the API/worker and Next.js web service. In Railway, create a project from this GitHub repository and add these services:
+The repository includes separate Dockerfiles and `.dockerignore` files for the API/worker and Next.js frontend. Deploy the two services from the same GitHub repository in one Render region using the dashboard's Docker-service setup below. The email worker runs inside the backend web service process; do not create a second worker service unless you intentionally change the deployment topology.
 
-1. **PostgreSQL**: add the Railway PostgreSQL service and set the backend `DATABASE_URL` to the database service's `DATABASE_URL` reference.
-2. **Redis**: add the Railway Redis service. Set backend `REDIS_HOST` to the Redis service's private domain and `REDIS_PORT=6379`. If the Redis service requires a password, also set `REDIS_PASSWORD`.
-3. **Elasticsearch**: deploy a single-node Elasticsearch 8 service with persistent storage, `discovery.type=single-node`, and `xpack.security.enabled=false` for this private demo network. Give it a Railway private domain and set backend `ELASTICSEARCH_NODE` to `http://<elasticsearch-private-domain>:9200`. Do not expose an unsecured Elasticsearch service publicly.
-4. **Backend/API + worker**: create a service from this repository with root directory `/backend` and Dockerfile `Dockerfile`. Generate a public domain for the API. Set `NODE_ENV=production`, `FRONTEND_URL` to the frontend's public HTTPS origin, `DATABASE_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` if required, `ELASTICSEARCH_NODE`, `JWT_SECRET`, `WORKER_CONCURRENCY=3`, `MIN_DELAY_BETWEEN_EMAILS_MS=2000`, `MAX_EMAILS_PER_HOUR_PER_SENDER=5`, and `SMTP_MODE=ethereal`. The container runs `prisma migrate deploy` before starting the Express API and BullMQ worker. Set Google OAuth callback to `https://<backend-public-domain>/api/auth/google/callback` and Slack callback to `https://<backend-public-domain>/api/slack/callback` if enabling those integrations.
-5. **Frontend**: create a second service from the same repository with root directory `/frontend` and Dockerfile `Dockerfile`. Set the Docker build argument `NEXT_PUBLIC_API_URL` to the backend public HTTPS origin (for example, `https://<backend-public-domain>`), then generate a frontend public domain. The frontend start script honors Railway's assigned `PORT`.
+### Create the data services
 
-After setting or changing `NEXT_PUBLIC_API_URL`, redeploy the frontend because Next.js embeds that public value in its client bundle at build time. After deployment, verify `https://<backend-public-domain>/health`, Google OAuth redirect/callback configuration, login, scheduling, and the dashboard. Use persistent volumes for database/Redis/Elasticsearch services; never put credentials in Dockerfiles, README, or GitHub variables that are not marked secret. Ethereal delivery is a test inbox and does not send real mail.
+1. **PostgreSQL**: create a Render Postgres database. Use its internal connection string for the backend `DATABASE_URL`; keep the database and app in the same region.
+2. **Key Value (Redis-compatible)**: create a Render Key Value instance in the same region. This is Valkey-compatible with ioredis. Choose a plan with persistence and select **Journal + Snapshot**; set the max-memory policy to `noeviction` for queue safety. Use the internal URL's hostname as `REDIS_HOST` and port `6379` as `REDIS_PORT`. Render's default internal URL does not require authentication; if you enable internal authentication, set the appropriate `REDIS_PASSWORD`.
+3. **Elasticsearch**: create a private service from the existing image `docker.elastic.co/elasticsearch/elasticsearch:8.12.0`, in the same region, with a persistent disk mounted at `/usr/share/elasticsearch/data`. Set `discovery.type=single-node`, `xpack.security.enabled=false`, and `ES_JAVA_OPTS=-Xms512m -Xmx512m`. Keep the service private (no public domain). Name the private service `reachinbox-elasticsearch`, then set backend `ELASTICSEARCH_NODE=http://reachinbox-elasticsearch:9200`. Elasticsearch is memory-intensive; choose a plan with sufficient memory and check current Render pricing before creating resources.
+
+Render Key Value persistence and persistent service disks may require paid plans. Review the plan and estimated cost for every service before provisioning. Do not use a non-persistent/free Redis plan for a production-like queue: losing Redis data can lose delayed jobs that have not yet been recovered from PostgreSQL.
+
+### Deploy the backend
+
+Create a Render **Web Service** from the private GitHub repository and configure:
+
+- Runtime: **Docker**
+- Dockerfile path: `backend/Dockerfile`
+- Docker build context: `backend`
+- Health check path: `/health`
+- `NODE_ENV=production`
+- `DATABASE_URL`: Render Postgres internal connection string
+- `REDIS_HOST`: Render Key Value internal hostname
+- `REDIS_PORT=6379`
+- `REDIS_PASSWORD`: only if internal Redis authentication is enabled
+- `ELASTICSEARCH_NODE=http://<elasticsearch-private-host>:9200`
+- `FRONTEND_URL`: the frontend's public HTTPS origin
+- `JWT_SECRET`: a newly generated, unique secret stored as a Render secret
+- `WORKER_CONCURRENCY=3`
+- `MIN_DELAY_BETWEEN_EMAILS_MS=2000`
+- `MAX_EMAILS_PER_HOUR_PER_SENDER=5`
+- `SMTP_MODE=ethereal`
+- `BULLMQ_LOCK_DURATION_MS=30000`
+- `BULLMQ_LOCK_RENEW_TIME_MS=15000`
+
+The backend image runs `prisma migrate deploy` before starting the Express API and BullMQ worker. Render sets `RENDER_EXTERNAL_URL` for a web service; the app uses it to derive the Google and Slack callbacks unless you explicitly set `GOOGLE_REDIRECT_URI` or `SLACK_REDIRECT_URI`. Once the backend has a public HTTPS domain, register these exact callback URLs in the provider consoles:
+
+- Google: `https://<backend-domain>/api/auth/google/callback` (`GOOGLE_REDIRECT_URI`)
+- Slack: `https://<backend-domain>/api/slack/callback` (`SLACK_REDIRECT_URI`)
+
+Add `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` through Render's secret environment-variable interface. Add Slack credentials only if enabling Slack for the demo. Keep provider redirect URLs exactly matching the provider console.
+
+### Deploy the frontend
+
+Create a second Render **Web Service** from the same repository:
+
+- Runtime: **Docker**
+- Dockerfile path: `frontend/Dockerfile`
+- Docker build context: `frontend`
+- Environment variable/build argument: `NEXT_PUBLIC_API_URL=https://<backend-domain>`
+
+Render exposes configured environment variables to Docker builds as build arguments. The frontend Dockerfile embeds `NEXT_PUBLIC_API_URL` into the Next.js client bundle at build time. Redeploy the frontend after changing it. The `next start` command honors Render's assigned `PORT`.
+
+### Initialize and verify
+
+After the backend has deployed and its database connection is healthy, open the backend service Shell and run `npm run prisma:seed` once to create the demo user and two Ethereal senders. Seeding requires outbound access to Ethereal. Verify the backend at `https://<backend-domain>/health`, then test Google login, composing/scheduling, the scheduled/sent views, and Bull Board. Ethereal is a test inbox; messages are not delivered to real recipients.
 
 ### 2. Configure and start the backend
 
