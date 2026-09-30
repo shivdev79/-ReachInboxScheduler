@@ -73,6 +73,18 @@ docker compose up -d --wait postgres redis elasticsearch
 
 The compose file publishes PostgreSQL on `5432`, Redis on host port `6380`, and Elasticsearch on `9200`.
 
+## Railway Deployment
+
+The repository includes separate Dockerfiles for the API/worker and Next.js web service. In Railway, create a project from this GitHub repository and add these services:
+
+1. **PostgreSQL**: add the Railway PostgreSQL service and set the backend `DATABASE_URL` to the database service's `DATABASE_URL` reference.
+2. **Redis**: add the Railway Redis service. Set backend `REDIS_HOST` to the Redis service's private domain and `REDIS_PORT=6379`. If the Redis service requires a password, also set `REDIS_PASSWORD`.
+3. **Elasticsearch**: deploy a single-node Elasticsearch 8 service with persistent storage, `discovery.type=single-node`, and `xpack.security.enabled=false` for this private demo network. Give it a Railway private domain and set backend `ELASTICSEARCH_NODE` to `http://<elasticsearch-private-domain>:9200`. Do not expose an unsecured Elasticsearch service publicly.
+4. **Backend/API + worker**: create a service from this repository with root directory `/backend` and Dockerfile `Dockerfile`. Generate a public domain for the API. Set `NODE_ENV=production`, `FRONTEND_URL` to the frontend's public HTTPS origin, `DATABASE_URL`, `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD` if required, `ELASTICSEARCH_NODE`, `JWT_SECRET`, `WORKER_CONCURRENCY=3`, `MIN_DELAY_BETWEEN_EMAILS_MS=2000`, `MAX_EMAILS_PER_HOUR_PER_SENDER=5`, and `SMTP_MODE=ethereal`. The container runs `prisma migrate deploy` before starting the Express API and BullMQ worker. Set Google OAuth callback to `https://<backend-public-domain>/api/auth/google/callback` and Slack callback to `https://<backend-public-domain>/api/slack/callback` if enabling those integrations.
+5. **Frontend**: create a second service from the same repository with root directory `/frontend` and Dockerfile `Dockerfile`. Set the Docker build argument `NEXT_PUBLIC_API_URL` to the backend public HTTPS origin (for example, `https://<backend-public-domain>`), then generate a frontend public domain. The frontend start script honors Railway's assigned `PORT`.
+
+After setting or changing `NEXT_PUBLIC_API_URL`, redeploy the frontend because Next.js embeds that public value in its client bundle at build time. After deployment, verify `https://<backend-public-domain>/health`, Google OAuth redirect/callback configuration, login, scheduling, and the dashboard. Use persistent volumes for database/Redis/Elasticsearch services; never put credentials in Dockerfiles, README, or GitHub variables that are not marked secret. Ethereal delivery is a test inbox and does not send real mail.
+
 ### 2. Configure and start the backend
 
 Copy `backend/.env.example` to `backend/.env`, set a unique random `JWT_SECRET`, and configure Google OAuth before using Google login. Slack variables are needed only for Slack OAuth. Do not commit `.env` files.
