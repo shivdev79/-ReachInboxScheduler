@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../config/prisma';
-import { getCurrentHourWindow } from '../services/rate-limiter.service';
+import { getCurrentHourWindow, getHourWindowStartMs } from '../services/rate-limiter.service';
 import { getRedisClient, checkRedisAvailable } from '../config/redis';
 import { serializeBigInts } from '../utils/serialize-bigints';
 
@@ -12,6 +12,7 @@ export async function getSenders(req: Request, res: Response) {
     });
 
     const currentHour = getCurrentHourWindow();
+    const currentHourStartMs = getHourWindowStartMs();
     const isRedis = checkRedisAvailable();
     const redis = isRedis ? getRedisClient() : null;
 
@@ -19,7 +20,7 @@ export async function getSenders(req: Request, res: Response) {
       senders.map(async (sender) => {
         let currentCount = 0;
         if (isRedis && redis) {
-          const key = `ratelimit:sender:${sender.id}:${currentHour}`;
+          const key = `rl:count:${sender.id}:${currentHourStartMs}`;
           const val = await redis.get(key);
           currentCount = val ? parseInt(val, 10) : 0;
         } else {
