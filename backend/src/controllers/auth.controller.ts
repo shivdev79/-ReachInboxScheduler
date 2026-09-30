@@ -27,10 +27,11 @@ async function verifyPassword(password: string, storedHash: string): Promise<boo
 
 function setAuthCookie(res: Response, userId: string) {
   const jwtToken = jwt.sign({ userId }, getJwtSecret(), { expiresIn: '7d' });
+  const isProduction = process.env.NODE_ENV === 'production';
   res.cookie('auth_token', jwtToken, {
     httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    sameSite: isProduction ? 'none' : 'lax',
+    secure: isProduction,
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
 }
@@ -254,7 +255,7 @@ export async function getCurrentUserSession(req: Request, res: Response) {
 export async function handleLogoutSession(req: Request, res: Response) {
   res.clearCookie('auth_token', {
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
     secure: process.env.NODE_ENV === 'production',
   });
   return res.status(204).send();
