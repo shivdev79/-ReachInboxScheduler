@@ -61,7 +61,7 @@ Hourly reservations use one Redis Lua script and a UTC fixed-hour key, `rl:count
 
 Requests use Prisma `createMany`, Elasticsearch bulk indexing, and BullMQ `addBulk`, so 1,000+ recipients can be registered without one database/queue round trip per recipient. Queueing capacity does not bypass sender limits: with two senders capped at five per hour, at most ten are eligible in that UTC hour; the remainder stay delayed for later windows. Redis, PostgreSQL, Elasticsearch, provider quotas, and configured pacing determine throughput. Use the test verifier with `SMTP_MODE=stub` to check volume without external SMTP traffic.
 
-## Setup
+## Setup Instructions
 
 ### 1. Start infrastructure
 
