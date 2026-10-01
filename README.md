@@ -12,8 +12,11 @@ ReachInbox is an Express/TypeScript scheduler and Next.js dashboard. PostgreSQL 
 - [How scheduling works](#how-scheduling-works)
 - [How persistence on restart works](#how-persistence-on-restart-works)
 - [How rate limiting and concurrency work](#how-rate-limiting-and-concurrency-work)
+- [Load and rate-limit example](#load-and-rate-limit-example)
 - [Implemented features mapped to the assignment](#implemented-features-mapped-to-the-assignment)
 - [Deploy to Render](#deploy-to-render)
+- [Keep Render and local execution isolated](#keep-render-and-local-execution-isolated)
+- [Assumptions and trade-offs](#assumptions-and-trade-offs)
 
 ## Architecture Overview
 
@@ -82,6 +85,10 @@ When the sender's cap is reached, the worker attempts one Slack alert per sender
 
 Requests use Prisma `createMany`, Elasticsearch bulk indexing, and BullMQ `addBulk`, so 1,000+ recipients can be registered without one database/queue round trip per recipient. Queueing capacity does not bypass sender limits: with two senders capped at five per hour, at most ten are eligible in that UTC hour; the remainder stay delayed for later windows. Redis, PostgreSQL, Elasticsearch, provider quotas, and configured pacing determine throughput. Use the test verifier with `SMTP_MODE=stub` to check volume without external SMTP traffic.
 
+### Load and Rate-Limit Example
+
+For 1,000 recipients split across two senders configured for five emails per UTC hour each, the API bulk-creates database rows and BullMQ jobs. At most ten messages can be sent in the current hour (five per sender); the remainder stay scheduled for later hour windows rather than being dropped. The worker serializes sends per sender and enforces the configured minimum gap (two seconds by default). The repository includes a `load` mode in `backend/scripts/verify.ts`; run it with the backend in `SMTP_MODE=stub` to avoid making SMTP calls. A 1,000-recipient production-scale run was not performed for this submission.
+
 ## Local Setup
 
 ### 1. Start infrastructure
@@ -147,9 +154,42 @@ Create a second Render **Web Service** from the same repository:
 
 Render exposes configured environment variables to Docker builds as build arguments. The frontend Dockerfile embeds `NEXT_PUBLIC_API_URL` into the Next.js client bundle at build time. Redeploy the frontend after changing it. The `next start` command honors Render's assigned `PORT`.
 
+### Current Render Demo
+
+The demo is deployed at [reachinbox-frontend-qukq.onrender.com](https://reachinbox-frontend-qukq.onrender.com/) with its API at [reachinbox-backend-mvf4.onrender.com](https://reachinbox-backend-mvf4.onrender.com/health). The API health check has returned `200 OK`. The backend's Free compute plan blocks outbound SMTP ports `25`, `465`, and `587`, so Ethereal delivery from this deployed service times out; a paid backend compute plan is required for deployed Ethereal sending. The deployed backend has also been observed falling back to PostgreSQL search because Elasticsearch is not reachable there. Configure a private Elasticsearch service and set `ELASTICSEARCH_NODE` to its private URL to enable Elasticsearch search in the deployment. These Render limitations do not affect local Docker-based verification.
+
 ### Initialize and verify
 
-After the backend has deployed and its database connection is healthy, open the backend service Shell and run `npm run prisma:seed` once to create the demo user and two Ethereal senders. Seeding requires outbound access to Ethereal. Verify the backend at `https://<backend-domain>/health`, then test Google login, composing/scheduling, the scheduled/sent views, and Bull Board. Ethereal is a test inbox; messages are not delivered to real recipients.
+After the backend has deployed and its database connection is healthy, seed the target database once to create the demo user and two Ethereal senders. A paid Render service with Shell access can run `npm run prisma:seed` from the backend service shell. Render's Free web-service plan does not include Shell access. For a Free-plan deployment, run the seed locally against the Render database using its **External Database URL**. On Windows, from the repository root:
+
+```powershell
+Set-Location backend
+$secureUrl = Read-Host "Render External Database URL" -AsSecureString
+$ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureUrl)
+try {
+    $env:DATABASE_URL = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+    npm run prisma:seed
+} finally {
+    Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
+    [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+    Remove-Variable secureUrl, ptr -ErrorAction SilentlyContinue
+}
+```
+
+Enter the database URL only at the masked prompt. This overrides the local `.env` value for the seed process and removes the process environment variable afterward. Run the seed once; it creates Ethereal test accounts and stores their SMTP credentials in the selected database. Verify the backend at `https://<backend-domain>/health`, then test Google login, composing/scheduling, the scheduled/sent views, and Bull Board. Ethereal captures test messages for preview; it does not deliver to real recipient inboxes.
+
+### Keep Render And Local Execution Isolated
+
+Deploying from this repository does not change your local runtime configuration or local database. Render builds and runs separate Docker services with environment variables configured in the Render Dashboard. Keep the following boundaries:
+
+- **Do not use Render's “Add from .env” with `backend/.env` or `frontend/.env.local`.** Those files are for local development, can contain credentials, and must not be uploaded or committed. Enter Render values directly in the matching Render service's Environment settings.
+- **Keep data services separate.** In Render, configure the hosted `DATABASE_URL`, Redis host/port/password, and Elasticsearch endpoint for the Render backend. Keep local `backend/.env` pointed at the local Docker Compose services (`localhost:5432`, `localhost:6380`, and `localhost:9200`). Do not paste hosted service URLs into the local environment unless you intentionally want local code to access hosted data.
+- **Keep app URLs environment-specific.** Render's backend gets its own `FRONTEND_URL` and OAuth callback URLs. Locally, keep `FRONTEND_URL=http://localhost:3000` and the Google/Slack callbacks on `http://localhost:5000`.
+- **Set the frontend API URL per deployment.** Render's frontend service needs `NEXT_PUBLIC_API_URL=https://<backend-domain>` at image build time. This value is public and is embedded in the browser bundle; never put credentials or tokens in a `NEXT_PUBLIC_*` variable. Local `frontend/.env.local` can remain `NEXT_PUBLIC_API_URL=http://localhost:5000`, or use the code's localhost default.
+- **Keep secrets in the backend service's Render environment.** Configure `JWT_SECRET`, OAuth client secrets, Redis password (if required), and other credentials there. Render passes environment variables to the container at runtime; the backend Dockerfile does not copy the local `.env` file into the image.
+- **Keep using the same local commands.** `docker compose up -d --wait postgres redis elasticsearch`, `npm run dev` in `backend`, and `npm run dev` in `frontend` remain the local workflow. A Render deploy or automatic deploy from a GitHub push runs remotely and does not rewrite local `.env` files or local database contents.
+
+The `.env` files are ignored by Git, and `.dockerignore` excludes them from the Docker build contexts. No source-code or local configuration change is required just to deploy to Render.
 
 ## How To Run The Backend
 
@@ -255,7 +295,7 @@ For fast local load checks only, set `SMTP_MODE=stub`. Stub mode records accepte
 | --- | --- |
 | Login and account controls | Google OAuth login plus email/password development access; dashboard shows account name, email, avatar or initials fallback, and logout. |
 | Dashboard navigation | Scheduled and Sent sections, sender usage, queue dashboard link, and primary Compose control. |
-| Compose | Subject/body editor, recipient chips, CSV/TXT upload with valid-address detection and deduplication, sender selection, scheduled start time, delay, and hourly limit. |
+| Compose | Subject/body editor, recipient chips, CSV/TXT upload with parsed-address count, valid-address detection and deduplication, sender selection, scheduled start time, delay, and hourly limit. |
 | Rich-text editing | Formatting toolbar supports undo/redo, text styles, bold, italic, underline, alignment, lists, indentation, quote, code, links, images, and strikethrough. |
 | Scheduled and sent views | Recipient, subject, scheduled/sent time, delivery status, and Ethereal preview links where available. |
 | UX and search | Search, refresh, loading and empty states, success/error toasts, and email details view. | 
@@ -287,3 +327,13 @@ There are no scheduled cron processes or cron libraries. BullMQ delayed jobs and
 - On Windows, Node's OS-level `SIGTERM` is not delivered as a catchable JavaScript signal; use Ctrl+C (`SIGINT`) for graceful local shutdown. The `SIGTERM` handler is intended for POSIX/container deployments and must be verified there.
 - Elasticsearch is a search index, not the source of truth; PostgreSQL owns durable email status. Elasticsearch failures fall back to database search.
 - A large queue can be accepted quickly but still take multiple rate-limit windows to deliver. Per-sender caps and pacing are intentional throughput limits.
+
+## Assumptions and Trade-offs
+
+- The assignment's SMTP requirement is demonstrated with Ethereal test accounts. A `SENT` status means the SMTP test provider accepted the message; it does not mean a real inbox received it.
+- Hourly quotas use fixed UTC clock-hour windows rather than a rolling 60-minute window. Each attempted send reserves quota before contacting SMTP, and that reservation is not refunded after a delivery failure.
+- PostgreSQL is authoritative for email state, while Redis/BullMQ is the persistent execution queue. Elasticsearch is a rebuildable search index; the API falls back to PostgreSQL search if Elasticsearch is unavailable.
+- SMTP acceptance and a PostgreSQL commit cannot be made atomic. Deterministic Message-IDs, idempotency keys, conditional row claims, and restart reconciliation reduce duplicates, but exactly-once delivery ultimately depends on provider behavior during the crash window.
+- Slack is optional at runtime: if a user has not connected a webhook, rate-limit alerts are skipped without failing email jobs. Live alerts require an authorized Slack app, workspace, and channel.
+- Render Free web services block outbound SMTP ports used by Ethereal. The current hosted demo therefore requires a paid backend compute plan for SMTP delivery; local Docker-based SMTP verification is unaffected.
+- Bulk scheduling uses database `createMany` and BullMQ `addBulk`; the 1,000-recipient behavior is documented and supported by the verifier's stub mode, but a 1,000-recipient end-to-end load run was not performed for this submission.

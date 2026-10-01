@@ -1,6 +1,6 @@
 'use client';
 
-import React, { FormEvent, useEffect, Suspense, useState } from 'react';
+import React, { FormEvent, useEffect, Suspense, useState, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useAuth } from '../../context/AuthContext';
 import { loginWithEmail, registerWithEmail } from '../../lib/api';
@@ -16,9 +16,13 @@ function LoginContent() {
   const [password, setPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const handledAuthError = useRef<string | null>(null);
 
   useEffect(() => {
     const authError = searchParams.get('error');
+    if (!authError || handledAuthError.current === authError) return;
+    handledAuthError.current = authError;
+
     if (authError === 'invalid_client') {
       toast.error('Google rejected the OAuth client credentials. Check that the Client ID and Client Secret belong to the same Web application client.');
     } else if (authError === 'invalid_grant') {
