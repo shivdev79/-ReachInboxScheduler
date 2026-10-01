@@ -156,7 +156,7 @@ Render exposes configured environment variables to Docker builds as build argume
 
 ### Current Render Demo
 
-The demo is deployed at [reachinbox-frontend-qukq.onrender.com](https://reachinbox-frontend-qukq.onrender.com/) with its API at [reachinbox-backend-mvf4.onrender.com](https://reachinbox-backend-mvf4.onrender.com/health). The API health check has returned `200 OK`. The backend's Free compute plan blocks outbound SMTP ports `25`, `465`, and `587`, so Ethereal delivery from this deployed service times out; a paid backend compute plan is required for deployed Ethereal sending. The deployed backend has also been observed falling back to PostgreSQL search because Elasticsearch is not reachable there. Configure a private Elasticsearch service and set `ELASTICSEARCH_NODE` to its private URL to enable Elasticsearch search in the deployment. These Render limitations do not affect local Docker-based verification.
+The demo is deployed at [reachinbox-frontend-qukq.onrender.com](https://reachinbox-frontend-qukq.onrender.com/) with its API at [reachinbox-backend-mvf4.onrender.com](https://reachinbox-backend-mvf4.onrender.com/health). 
 
 ### Initialize and verify
 
